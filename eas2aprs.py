@@ -10,18 +10,23 @@ import time
 import os
 #import str
 import re
+import chess #this is where the fun begins
+from fen2pil import draw
 
 # Source address for APRS packets.
 # You should put your own callsign here.
 # Yeah, I know it should be a command line option, but like I said,
 # this is just a quick minimal proof of concept that needs more work.
 
-mycall = 'HAM123'
+mycall = 'N2WU-10'
 
 # APRS generally uses the destination field for a product id.
 # APZxxx is experimental so we will pick something in that name range.
 
-product_id = 'APZEAS'
+product_id = 'APZEAS' 
+
+# Yeah, well, how about we do it in APRS first. Still very fun and you can mess around with 
+# Layer 2 later
 
 # Here is something interesting you might want to try.
 # When direwolf sees "SPEECH" in the destination field, it will send the
@@ -36,20 +41,43 @@ product_id = 'APZEAS'
 # kisssutil puts received APRS packets into the receive queue directory.
 # Here we remove those packets and process them.
 
-rq_dir = '/dev/shm/RQ'
+rq_dir = '/dev/shm/RQ' #this stays
 
 # For transmitting, we simply put a file in the transmit queue.
 # kissutil will send it to direwolf to be sent over the radio.
 # A transmit channel can optionaally...
 
-tq_dir = '/dev/shm/TQ'
+tq_dir = '/dev/shm/TQ' #this stays
 
 # Transmit channel number.
 
 xmit_chan = 0
 
+def chess_init():
+    global color
+    color = input("Black (B) or White (W)? ")
+    # add error checking
+    if color == 'B':
+        # go right to CQing for a white match
+        return
+    elif color == 'W':
+        global board
+        board = chess.Board()
+        print("Game Start")
+    return
 
 
+def printBoard(fen):
+    #First, check move is okay?
+    
+    
+    board_image = draw.transform_fen_pil(
+            fen=fen,
+            board_size=480,
+            light_color=(255, 253, 208),
+            dark_color=(76, 153, 0)
+        )
+    return board_image
 
 #----- aprs_msg -----
 
@@ -58,7 +86,7 @@ xmit_chan = 0
 
 def aprs_msg(src,dst,via,addr,msgtext):
     """Create APRS 'message' from given components."""
-
+    # This stays, you're editing msgtext.
     to = addr.ljust(9)[:9]
     msg = src + '>' + dst
     if via:
@@ -98,7 +126,7 @@ def send_msg (chan, msg):
     time.sleep (0.005)	# Ensure unique names
 
 
-
+"""
 #----- process_eas -----
 
 # Given an EAS SAME message, this calls an external application to 
@@ -106,9 +134,10 @@ def send_msg (chan, msg):
 # The text can exceed the maximum size of an AX.25 frame.
 # Luckily, dsame splits it into multiple reasonably sized lines.
 # Each of these is transmitted as an APRS "message."
+# This can be converted for game purposes
 
 def process_eas (chan, eas):
-    """Convert an EAS SAME message to text and transmit."""
+    # Convert an EAS SAME message to text and transmit.
 
     text = os.popen('./dsame.py --msg "' + eas + '"').read().split("\n")
     text2 = list(filter(None, text))
@@ -120,8 +149,46 @@ def process_eas (chan, eas):
             print (msg)
             send_msg (xmit_chan, msg)
         #print ("---")
-        
+ """       
 
+#----- process_chess -----
+def process_chess (chan, move):
+    if move[0] == color:
+        # if the board color is the same as our color
+        # ignore it and move on
+        print("Received same color packet. Disregard.")
+    elif move[0] != color:
+        # Color is different from our color
+        # Play on!
+        # First, get our current game board
+        opponent_move = 
+        # Then, add this received move.
+
+        # Send back to the user for making the next move.
+    return
+
+
+
+
+#----- get_move -----
+def get_move():
+    nextmove = input("Make a move: ")
+    # Here's where all the playing happens
+    newmove = chess.Move.from_uci(nextmove)
+    confirm = input("You sure? (y/n)")
+    if confirm == 'y':
+        board.push(newmove)  # Make the move
+        printBoard(board.fen())
+    return nextmove
+
+#----- aprs_chess -----
+# Gets our chess moves and converts it into the APRS strings
+def play_chess ():
+    msgtext = get_move()
+    # aprs_msg(src,dst,via,addr,msgtext):
+    msg = aprs_msg(mycall, product_id, '', addr, msgtext)
+    print(msg)
+    send_msg(xmit_chan, msg)
 
 #----- parse_aprs -----
 
@@ -149,10 +216,10 @@ def parse_aprs (packet):
                 parse_aprs (chan + info[1:])
             else:
                 parse_aprs (info[1:])
-        elif info[0:3] == '{DE':
-            # APRS "user defined data" format for EAS.
-            #print ('Process "message" - ' + info)
-            process_eas (chan, info[3:])
+        elif info[0:2] == '{{':
+            # APRS "user defined data" format.
+            # print ('Process "message" - ' + info)
+            process_chess(chan, info[2:]) # you are using that third frame to determine movesets
         else:
             print ('Not APRS "user defined data" format - ' + info)
     else:
@@ -197,5 +264,11 @@ def recv_loop():
 
 
 #----- start here -----
+while True:
+    # Initialize to get our color and board
+    chess_init()
+    # Make a move with the board
+    play_chess()
+    # Transmit the board
 
-recv_loop()
+    recv_loop()
