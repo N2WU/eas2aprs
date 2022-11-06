@@ -54,17 +54,17 @@ tq_dir = '/dev/shm/TQ' #this stays
 xmit_chan = 0
 
 def chess_init():
-    global color
+    # global color
     color = input("Black (B) or White (W)? ")
     # add error checking
     if color == 'B':
         # go right to CQing for a white match
         return
     elif color == 'W':
-        global board
+        # global board
         board = chess.Board()
         print("Game Start")
-    return
+    return color, board
 
 
 def printBoard(fen):
@@ -84,14 +84,19 @@ def printBoard(fen):
 # Just glue all of the pieces together.
 # The only interesting part is ensuring that the addresee is exactly 9 characters.
 
-def aprs_msg(src,dst,via,addr,msgtext):
+def aprs_msg(src,dst,via,packet_type,move_instr):
+    # This uses 3rd party message format
+    # Source Path - Callsign - > - Receiving - * - > Destination - :
     """Create APRS 'message' from given components."""
     # This stays, you're editing msgtext.
-    to = addr.ljust(9)[:9]
-    msg = src + '>' + dst
-    if via:
-        msg += ',' + via
-    msg += '::' + to + ':' + msgtext
+    #to = addr.ljust(9)[:9]
+    # figure out how to incorporate callsigns, etc
+    msg = "{{" + packet_type + move_instr
+    # msg = src + '>' + dst
+    # if via:
+    #     msg += ',' + via
+    # msg += ':{{' + packet_type + move_instr
+    # Uses Source Path Header, 'Data with Source Path Header', and 'User Defined Data Format' 
     return msg
 
 
@@ -125,70 +130,71 @@ def send_msg (chan, msg):
         f.close()
     time.sleep (0.005)	# Ensure unique names
 
-
-"""
-#----- process_eas -----
-
-# Given an EAS SAME message, this calls an external application to 
-# convert it to human understandable text.
-# The text can exceed the maximum size of an AX.25 frame.
-# Luckily, dsame splits it into multiple reasonably sized lines.
-# Each of these is transmitted as an APRS "message."
-# This can be converted for game purposes
-
-def process_eas (chan, eas):
-    # Convert an EAS SAME message to text and transmit.
-
-    text = os.popen('./dsame.py --msg "' + eas + '"').read().split("\n")
-    text2 = list(filter(None, text))
-    n = len(text2)
-    if n:
-        print ("Transmitting...");
-        for i in range(0,n):
-            msg = aprs_msg (mycall, product_id, '', 'NWS', "[" + str(i+1) + "/" + str(n) + "] " + text2[i])
-            print (msg)
-            send_msg (xmit_chan, msg)
-        #print ("---")
- """       
+#----- recv_chess -----
+def recv_chess(move):
+    # Do something about Query, Move, or Reacknowldegement packets
+    movestr = ""
+    # traverse in the string
+    for ele in move[1:]:
+         movestr += ele
+    return movestr
 
 #----- process_chess -----
-def process_chess (chan, move):
-    if move[0] == color:
+def process_chess (move):
+    # Goal of this function is to read any move and update the current board
+    # if move[1] == color:
         # if the board color is the same as our color
         # ignore it and move on
-        print("Received same color packet. Disregard.")
-    elif move[0] != color:
+        #print("Received same color packet. Disregard.")
+    # elif move[1] != color:
         # Color is different from our color
         # Play on!
         # First, get our current game board
-        opponent_move = 
-        # Then, add this received move.
-
+    newmove = chess.Move.from_uci(move)
+    board.push(newmove)  # Make the move
+    printBoard(board.fen())
         # Send back to the user for making the next move.
     return
+   
 
+
+
+#----- transmit_move -----
+def transmit_move(move_instr,color)
+    packet_type = "M" + color # for move, but this should be optimized
+    msg = aprs_msg(mycall,product_id,'',packet_type,move_instr)
+    print (msg)
+    send_msg (xmit_chan, msg)
 
 
 
 #----- get_move -----
-def get_move():
+def get_move(board):
     nextmove = input("Make a move: ")
     # Here's where all the playing happens
-    newmove = chess.Move.from_uci(nextmove)
     confirm = input("You sure? (y/n)")
     if confirm == 'y':
-        board.push(newmove)  # Make the move
-        printBoard(board.fen())
+        process_chess(nextmove)
     return nextmove
+
+# Is nextmove the format you want?
 
 #----- aprs_chess -----
 # Gets our chess moves and converts it into the APRS strings
-def play_chess ():
-    msgtext = get_move()
-    # aprs_msg(src,dst,via,addr,msgtext):
-    msg = aprs_msg(mycall, product_id, '', addr, msgtext)
-    print(msg)
-    send_msg(xmit_chan, msg)
+# def play_chess ():
+#    msgtext = get_move()
+#    # aprs_msg(src,dst,via,addr,msgtext):
+#    msg = aprs_msg(mycall, product_id, '', addr, msgtext)
+#    print(msg)
+#    send_msg(xmit_chan, msg)
+
+#----- play_chess -----
+def play_chess(board, color):
+    while True:
+        next_player_move = get_move(board)
+        transmit_move(next_player_move,color)
+        recv_loop() # should result in a packet if you're successful
+
 
 #----- parse_aprs -----
 
@@ -209,17 +215,20 @@ def parse_aprs (packet):
         info = m.group(3)
         #print ('<>'+addrs+'<>'+info+'<>')
 
-        if info[0] == '}':
-            # Unwrap third party traffic format
+        if info[0] == '{':
+            # Unwrap user defined data
             # Preserve any channel.
             if chan:
-                parse_aprs (chan + info[1:])
+                recv_move = parse_aprs (chan + info[2:])
+                process_chess(recv_move)
             else:
-                parse_aprs (info[1:])
+                recv_move = parse_aprs (info[2:])
+                process_chess(recv_move)
         elif info[0:2] == '{{':
             # APRS "user defined data" format.
             # print ('Process "message" - ' + info)
-            process_chess(chan, info[2:]) # you are using that third frame to determine movesets
+            recv_move = recv_chess(info[2:]) # you are using that third frame to determine movesets
+            process_chess(recv_move)
         else:
             print ('Not APRS "user defined data" format - ' + info)
     else:
@@ -237,7 +246,11 @@ def recv_loop():
         os.mkdir(rq_dir)
 
     while True:
+        print("Looping receive. Press space to exit.")
         time.sleep(1)
+        if keyboard.is_pressed('space'):  # if key 'space' is pressed 
+            print('Exiting Loop')
+            break  # finishing the loop
         #print ('polling')
         try:
             files = os.listdir(rq_dir)
@@ -256,6 +269,8 @@ def recv_loop():
                     for m in h:
                         m.rstrip('\n')
                         parse_aprs (m.rstrip('\n'))
+                        # Probably some errors with multiple packets at once
+                break # This will exit the loop if a packet is received and decoded        
                 os.remove(fname)
             else:
  		#print (fname + ' is not an ordinary file - ignore')
@@ -264,11 +279,10 @@ def recv_loop():
 
 
 #----- start here -----
-while True:
     # Initialize to get our color and board
-    chess_init()
+board, color = chess_init()
     # Make a move with the board
-    play_chess()
+play_chess(board, color)
+    # You want to sort halfway through play_chess for player, and receive for the opponent
     # Transmit the board
 
-    recv_loop()
